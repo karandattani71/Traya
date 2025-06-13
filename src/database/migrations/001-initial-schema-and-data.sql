@@ -191,10 +191,10 @@ WHERE NOT EXISTS (
 -- Users with bcrypt hashed password 'password123'
 INSERT INTO users ("firstName", "lastName", email, password, phone, "dateOfBirth", gender, address, "createdAt", "updatedAt")
 VALUES
-('John', 'Doe', 'john.doe@example.com', '$2b$10$xbUFtw17x5gTBCeu7/L7Pe6hzG9i6zwC26YTOai5ksnDKRxlrZKHy', '+1234567890', '1990-01-01', 'male', '123 Main St, New York', NOW(), NOW()),
-('Jane', 'Smith', 'jane.smith@example.com', '$2b$10$xbUFtw17x5gTBCeu7/L7Pe6hzG9i6zwC26YTOai5ksnDKRxlrZKHy', '+1234567891', '1992-05-15', 'female', '456 Park Ave, London', NOW(), NOW()),
-('Bob', 'Wilson', 'bob.wilson@example.com', '$2b$10$xbUFtw17x5gTBCeu7/L7Pe6hzG9i6zwC26YTOai5ksnDKRxlrZKHy', '+1234567892', '1985-12-30', 'male', '789 Oak Rd, Paris', NOW(), NOW()),
-('Alice', 'Johnson', 'alice.johnson@example.com', '$2b$10$xbUFtw17x5gTBCeu7/L7Pe6hzG9i6zwC26YTOai5ksnDKRxlrZKHy', '+1234567893', '1988-07-20', 'female', '321 Pine St, Dubai', NOW(), NOW())
+('John', 'Doe', 'john.doe@example.com', '$2b$10$io0zYH02CgPN7nbM5fcSVexoK2LaQp0qDGKjzZiuu5KutpXhcVqAa', '+1234567890', '1990-01-01', 'male', '123 Main St, New York', NOW(), NOW()),
+('Jane', 'Smith', 'jane.smith@example.com', '$2b$10$io0zYH02CgPN7nbM5fcSVexoK2LaQp0qDGKjzZiuu5KutpXhcVqAa', '+1234567891', '1992-05-15', 'female', '456 Park Ave, London', NOW(), NOW()),
+('Bob', 'Wilson', 'bob.wilson@example.com', '$2b$10$io0zYH02CgPN7nbM5fcSVexoK2LaQp0qDGKjzZiuu5KutpXhcVqAa', '+1234567892', '1985-12-30', 'male', '789 Oak Rd, Paris', NOW(), NOW()),
+('Alice', 'Johnson', 'alice.johnson@example.com', '$2b$10$io0zYH02CgPN7nbM5fcSVexoK2LaQp0qDGKjzZiuu5KutpXhcVqAa', '+1234567893', '1988-07-20', 'female', '321 Pine St, Dubai', NOW(), NOW())
 ON CONFLICT (email) DO NOTHING;
 
 -- Insert Flights, Seats, Fares, and Bookings using a single transaction block
