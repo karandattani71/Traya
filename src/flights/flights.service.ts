@@ -28,6 +28,15 @@ export class FlightsService {
     }
 
     try {
+      // Check if flight number already exists
+      const existingFlight = await this.flightsRepository.findOne({
+        where: { flightNumber: createFlightDto.flightNumber }
+      });
+
+      if (existingFlight) {
+        throw new ConflictException('Flight number already exists');
+      }
+
       // Create flight
       const flight = this.flightsRepository.create({
         ...createFlightDto,
@@ -39,18 +48,33 @@ export class FlightsService {
       const savedFlight = await this.flightsRepository.save(flight);
 
       // Get seat classes
-      const seatClasses = await this.seatClassesRepository.find();
+      const seatClasses = await this.seatClassesRepository.find({
+        order: { priority: 'DESC' } // First class (highest priority) first
+      });
 
       // Create seats for each class
       const seatsToCreate = this.generateSeats(savedFlight, seatClasses);
+      
+      // Log the number of seats created
+      const seatsByClass = seatsToCreate.reduce((acc, seat) => {
+        const className = seat.seatClass.name;
+        acc[className] = (acc[className] || 0) + 1;
+        return acc;
+      }, {});
+      
+      console.log('Seats generated:', {
+        byClass: seatsByClass,
+        total: seatsToCreate.length
+      });
+
       await this.seatsRepository.save(seatsToCreate);
 
       return savedFlight;
     } catch (error) {
-      if (error.code === '23505') { // Unique violation
-        throw new ConflictException('Flight number already exists');
+      if (error instanceof ConflictException) {
+        throw error;
       }
-      throw error;
+      throw new Error('Failed to create flight: ' + error.message);
     }
   }
 
@@ -58,26 +82,50 @@ export class FlightsService {
     const seats: Partial<Seat>[] = [];
     const totalSeats = flight.totalSeats || 300; // Default to 300 if not specified
 
-    // Distribution of seats by class (example)
+    // Distribution of seats by class
     const distribution = {
-      economy: 0.7, // 70%
-      business: 0.2, // 20%
-      first: 0.1, // 10%
+      first: 0.1,    // 10% First Class
+      business: 0.2, // 20% Business Class
+      economy: 0.7,  // 70% Economy Class
     };
 
-    seatClasses.forEach(seatClass => {
-      const seatCount = Math.floor(totalSeats * distribution[seatClass.name]);
-      const seatsPerRow = 6; // Example: 3-3 configuration
-      const rows = Math.ceil(seatCount / seatsPerRow);
+    let currentRow = 1; // Start from row 1
+    let remainingSeats = totalSeats;
 
-      for (let row = 1; row <= rows; row++) {
-        for (let col = 0; col < seatsPerRow; col++) {
-          if ((row - 1) * seatsPerRow + col < seatCount) {
+    // Generate seats for each class
+    seatClasses.forEach((seatClass, index) => {
+      const seatsPerRow = seatClass.name === 'first' ? 4 : // 2-2 configuration for first class
+                         seatClass.name === 'business' ? 6 : // 3-3 configuration for business class
+                         8; // 4-4 configuration for economy class
+
+      const columns = seatClass.name === 'first' ? ['A', 'B', 'E', 'F'] : // Skip C, D for first class
+                     seatClass.name === 'business' ? ['A', 'B', 'C', 'D', 'E', 'F'] : // All columns for business
+                     ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']; // All columns for economy
+
+      // Calculate target seats for this class
+      let targetSeatCount;
+      if (index === seatClasses.length - 1) {
+        // For the last class (economy), use remaining seats
+        targetSeatCount = remainingSeats;
+      } else {
+        // For first and business class, calculate based on distribution
+        targetSeatCount = Math.ceil(totalSeats * distribution[seatClass.name]);
+      }
+
+      // Calculate rows needed (round up to ensure we have enough rows)
+      const rows = Math.ceil(targetSeatCount / columns.length);
+      const actualSeatsForClass = rows * columns.length;
+
+      // Generate seats for this class
+      for (let row = 0; row < rows; row++) {
+        for (const column of columns) {
+          // Only create the seat if we haven't exceeded the total seats
+          if (seats.length < totalSeats) {
             seats.push({
-              seatNumber: `${row}${String.fromCharCode(65 + col)}`, // 1A, 1B, etc.
+              seatNumber: `${currentRow + row}${column}`,
               status: SeatStatus.AVAILABLE,
-              row,
-              column: String.fromCharCode(65 + col),
+              row: currentRow + row,
+              column: column,
               flight,
               seatClass,
               flightId: flight.id,
@@ -85,6 +133,15 @@ export class FlightsService {
             });
           }
         }
+      }
+
+      // Update remaining seats and current row
+      remainingSeats -= actualSeatsForClass;
+      currentRow += rows;
+
+      // Add spacing between classes (5 rows between classes)
+      if (index < seatClasses.length - 1) {
+        currentRow += 5;
       }
     });
 
