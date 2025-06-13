@@ -4,6 +4,7 @@ import { DataSource, Repository } from 'typeorm';
 import { BookingsService } from './bookings.service';
 import { Booking, BookingStatus, User, Flight, Seat, SeatStatus, Fare, SeatClass } from '../entities';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { SeatBlockService } from '../seats/seat-block.service';
 import { NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 
 describe('BookingsService', () => {
@@ -45,6 +46,10 @@ describe('BookingsService', () => {
     findOne: jest.fn(),
   };
 
+  const mockSeatBlockService = {
+    unblockSeat: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,6 +78,10 @@ describe('BookingsService', () => {
           provide: DataSource,
           useValue: mockDataSource,
         },
+        {
+          provide: SeatBlockService,
+          useValue: mockSeatBlockService,
+        },
       ],
     }).compile();
 
@@ -93,17 +102,22 @@ describe('BookingsService', () => {
     const mockCreateBookingDto: CreateBookingDto = {
       userId: 'user-123',
       flightId: 'flight-123',
-      seatId: 'seat-123',
-      passengerName: 'John Doe',
-      passengerEmail: 'john@example.com',
-      passengerPhone: '+1234567890',
+      passengers: [
+        {
+          seatId: 'seat-123',
+          passengerName: 'John Doe',
+          passengerEmail: 'john@example.com',
+          passengerPhone: '+1234567890',
+        }
+      ]
     };
 
     const mockUser = { id: 'user-123', email: 'john@example.com' };
     const mockFlight = { id: 'flight-123', availableSeats: 10 };
     const mockSeat = { 
       id: 'seat-123', 
-      status: SeatStatus.AVAILABLE,
+      status: SeatStatus.BLOCKED,
+      blockedByUserId: 'user-123',
       seatClass: { id: 'class-123', name: 'economy' }
     };
     const mockFare = { totalPrice: 100.00 };
@@ -127,14 +141,21 @@ describe('BookingsService', () => {
           update: jest.fn(),
           decrement: jest.fn(),
           findOne: jest.fn().mockResolvedValue(mockSavedBooking),
+          createQueryBuilder: jest.fn().mockReturnValue({
+            setLock: jest.fn().mockReturnThis(),
+            innerJoinAndSelect: jest.fn().mockReturnThis(),
+            where: jest.fn().mockReturnThis(),
+            getOne: jest.fn().mockResolvedValue(mockSeat),
+          }),
         });
       });
 
       const result = await service.create(mockCreateBookingDto);
 
       expect(result).toBeDefined();
-      expect(result.id).toBe('booking-123');
-      expect(result.status).toBe(BookingStatus.CONFIRMED);
+      // For single passenger, it returns a single booking object
+      expect((result as any).id).toBe('booking-123');
+      expect((result as any).status).toBe(BookingStatus.CONFIRMED);
     });
 
     it('should throw NotFoundException when user not found', async () => {

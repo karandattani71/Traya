@@ -39,10 +39,4 @@ export class CreateFlightDto {
   @IsString()
   @Length(1, 50)
   aircraft: string;
-
-  @ApiPropertyOptional({ description: 'Total seats on the flight', minimum: 1 })
-  @IsOptional()
-  @IsNumber()
-  @Min(1)
-  totalSeats?: number;
 } 

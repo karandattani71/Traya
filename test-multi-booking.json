@@ -1,0 +1,25 @@
+{
+  "flightId": "e8077c34-f7e8-44aa-8ec2-9d0370efc14a",
+  "passengers": [
+    {
+      "seatId": "seat-id-1",
+      "passengerName": "John Doe",
+      "passengerEmail": "john.doe@example.com",
+      "passengerPhone": "+1234567890"
+    },
+    {
+      "seatId": "seat-id-2",
+      "passengerName": "Jane Doe", 
+      "passengerEmail": "jane.doe@example.com",
+      "passengerPhone": "+1234567891"
+    },
+    {
+      "seatId": "seat-id-3",
+      "passengerName": "Bob Smith",
+      "passengerEmail": "bob.smith@example.com",
+      "passengerPhone": "+1234567892"
+    }
+  ],
+  "contactEmail": "family@example.com",
+  "contactPhone": "+1234567890"
+} 

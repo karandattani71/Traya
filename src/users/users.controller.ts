@@ -30,14 +30,6 @@ import { UseGuards } from '@nestjs/common';
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Get('profile')
-  @ApiOperation({ summary: 'Get current user profile' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Profile retrieved successfully' })
-  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
-  async getProfile(@Request() req) {
-    return this.usersService.findOne(req.user.sub);
-  }
-
   @Get()
   @ApiOperation({ summary: 'Get all users' })
   @ApiResponse({ status: HttpStatus.OK, description: 'List of all users' })

@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, Min } from 'class-validator';
+import { IsNumber, IsOptional, Min, IsString, Length } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateFareDto {
@@ -19,4 +19,15 @@ export class UpdateFareDto {
   @IsNumber()
   @Min(0)
   serviceFee?: number;
+
+  @ApiPropertyOptional({ 
+    description: 'Currency code (3-letter ISO code)', 
+    example: 'USD',
+    maxLength: 3,
+    minLength: 3
+  })
+  @IsOptional()
+  @IsString()
+  @Length(3, 3)
+  currency?: string;
 } 

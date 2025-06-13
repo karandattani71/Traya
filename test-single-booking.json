@@ -1,0 +1,11 @@
+{
+  "flightId": "e8077c34-f7e8-44aa-8ec2-9d0370efc14a",
+  "passengers": [
+    {
+      "seatId": "seat-uuid-here",
+      "passengerName": "John Doe",
+      "passengerEmail": "john.doe@example.com",
+      "passengerPhone": "+1234567890"
+    }
+  ]
+} 

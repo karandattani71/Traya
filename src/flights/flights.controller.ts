@@ -9,7 +9,8 @@ import {
   Query,
   ParseUUIDPipe, 
   HttpStatus,
-  UseGuards 
+  UseGuards,
+  ParseIntPipe 
 } from '@nestjs/common';
 import { 
   ApiTags, 
@@ -17,15 +18,22 @@ import {
   ApiResponse, 
   ApiParam,
   ApiQuery,
-  ApiBearerAuth
+  ApiBearerAuth,
+  ApiBody
 } from '@nestjs/swagger';
 import { FlightsService } from './flights.service';
 import { CreateFlightDto } from './dto/create-flight.dto';
+import { UpdateFlightDto } from './dto/update-flight.dto';
 import { SearchFlightsDto } from './dto/search-flights.dto';
 import { UpdateFlightStatusDto } from './dto/update-flight-status.dto';
 import { SeatClassName } from '../entities';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { FlightDetailsDto } from './dto/flight-details.dto';
+
+export class AddSeatsDto {
+  seatClassName: SeatClassName;
+  seatCount: number;
+}
 
 @ApiTags('flights')
 @Controller('flights')
@@ -33,15 +41,58 @@ export class FlightsController {
   constructor(private readonly flightsService: FlightsService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a new flight' })
+  @ApiOperation({ summary: 'Create a new flight (without seats or fares)' })
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Flight created successfully' })
   @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Flight number already exists' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid flight data' })
   async create(@Body() createFlightDto: CreateFlightDto) {
     return this.flightsService.create(createFlightDto);
   }
 
+  @Post(':id/seat-classes/:seatClassName/seats')
+  @ApiOperation({ summary: 'Add seats for a specific seat class to a flight' })
+  @ApiParam({ name: 'id', description: 'Flight ID' })
+  @ApiParam({ name: 'seatClassName', description: 'Seat class name', enum: SeatClassName })
+  @ApiQuery({ name: 'count', description: 'Number of seats to add', type: 'number' })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'Seats added successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight or seat class not found' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Seats for this class already exist' })
+  async addSeatsForClass(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('seatClassName') seatClassName: SeatClassName,
+    @Query('count', ParseIntPipe) count: number
+  ) {
+    return this.flightsService.addSeatsForClass(id, seatClassName, count);
+  }
+
+  @Delete(':id/seat-classes/:seatClassName/seats')
+  @ApiOperation({ summary: 'Remove seats for a specific seat class from a flight' })
+  @ApiParam({ name: 'id', description: 'Flight ID' })
+  @ApiParam({ name: 'seatClassName', description: 'Seat class name', enum: SeatClassName })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Seats removed successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight, seat class, or seats not found' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Cannot remove seats that are booked' })
+  async removeSeatsForClass(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('seatClassName') seatClassName: SeatClassName
+  ) {
+    return this.flightsService.removeSeatsForClass(id, seatClassName);
+  }
+
+  @Get(':id/seat-configuration')
+  @ApiOperation({ summary: 'Get seat configuration for a flight' })
+  @ApiParam({ name: 'id', description: 'Flight ID' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Flight seat configuration' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
+  async getFlightSeatConfiguration(@Param('id', ParseUUIDPipe) id: string) {
+    return this.flightsService.getFlightSeatConfiguration(id);
+  }
+
   @Get('search')
-  @ApiOperation({ summary: 'Search available flights' })
+  @ApiOperation({ summary: 'Search flights by origin, destination and date' })
+  @ApiQuery({ name: 'originCode', description: 'Origin airport code' })
+  @ApiQuery({ name: 'destinationCode', description: 'Destination airport code' })
+  @ApiQuery({ name: 'departureDate', description: 'Departure date (YYYY-MM-DD)' })
   @ApiResponse({ status: HttpStatus.OK, description: 'List of matching flights' })
   async search(@Query() searchDto: SearchFlightsDto) {
     return this.flightsService.search(searchDto);
@@ -54,16 +105,16 @@ export class FlightsController {
     return this.flightsService.findAll();
   }
 
-  @Get(':id')
-  @ApiOperation({ summary: 'Get detailed flight information including seat classes and fares' })
+  @Get(':id/details')
+  @ApiOperation({ summary: 'Get detailed flight information including seat availability and fares' })
   @ApiParam({ name: 'id', description: 'Flight ID' })
   @ApiResponse({ 
     status: HttpStatus.OK, 
-    description: 'Flight details with seat availability and fares',
-    type: FlightDetailsDto 
+    description: 'Detailed flight information with seat availability and fares',
+    type: FlightDetailsDto
   })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
-  async getFlightDetails(@Param('id', ParseUUIDPipe) id: string): Promise<FlightDetailsDto> {
+  async getFlightDetails(@Param('id', ParseUUIDPipe) id: string) {
     return this.flightsService.getFlightDetails(id);
   }
 
@@ -90,13 +141,14 @@ export class FlightsController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update flight details' })
+  @ApiOperation({ summary: 'Update flight information' })
   @ApiParam({ name: 'id', description: 'Flight ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Flight updated successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Flight number already exists' })
   async update(
     @Param('id', ParseUUIDPipe) id: string, 
-    @Body() updateFlightDto: Partial<CreateFlightDto>
+    @Body() updateFlightDto: UpdateFlightDto
   ) {
     return this.flightsService.update(id, updateFlightDto);
   }
@@ -107,14 +159,14 @@ export class FlightsController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Flight status updated successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
   async updateStatus(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ParseUUIDPipe) id: string, 
     @Body() updateStatusDto: UpdateFlightStatusDto
   ) {
     return this.flightsService.updateStatus(id, updateStatusDto);
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Delete flight' })
+  @ApiOperation({ summary: 'Delete a flight' })
   @ApiParam({ name: 'id', description: 'Flight ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Flight deleted successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })

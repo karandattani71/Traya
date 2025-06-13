@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, In } from 'typeorm';
 import { Booking, BookingStatus, User, Flight, Seat, SeatStatus, Fare } from '../entities';
 import { CreateBookingDto } from './dto/create-booking.dto';
+import { CalculateFareDto } from './dto/calculate-fare.dto';
 import { SeatBlockService } from '../seats/seat-block.service';
 
 @Injectable()
@@ -22,15 +23,32 @@ export class BookingsService {
     private seatBlockService: SeatBlockService,
   ) {}
 
-  async create(createBookingDto: CreateBookingDto): Promise<Booking> {
+  async create(createBookingDto: CreateBookingDto) {
     // Validate userId is present
     if (!createBookingDto.userId) {
       throw new BadRequestException('User ID is required for booking');
     }
 
+    // Validate that we have at least one passenger
+    if (!createBookingDto.passengers || createBookingDto.passengers.length === 0) {
+      throw new BadRequestException('At least one passenger is required');
+    }
+
+    // If single passenger, return single booking object for backward compatibility
+    if (createBookingDto.passengers.length === 1) {
+      return this.createSingleBooking(createBookingDto);
+    }
+
+    // Multiple passengers - return array of bookings
+    return this.createMultipleBookings(createBookingDto);
+  }
+
+  private async createSingleBooking(createBookingDto: CreateBookingDto): Promise<Booking> {
+    const passenger = createBookingDto.passengers[0];
+
     // First verify that the seat is blocked by the current user
     const seat = await this.seatsRepository.findOne({
-      where: { id: createBookingDto.seatId },
+      where: { id: passenger.seatId },
       relations: ['seatClass'],
     });
 
@@ -76,7 +94,7 @@ export class BookingsService {
           .createQueryBuilder(Seat, 'seat')
           .setLock('pessimistic_write')
           .innerJoinAndSelect('seat.seatClass', 'seatClass')
-          .where('seat.id = :seatId', { seatId: createBookingDto.seatId })
+          .where('seat.id = :seatId', { seatId: passenger.seatId })
           .getOne();
 
         if (!lockedSeat) {
@@ -113,10 +131,10 @@ export class BookingsService {
           bookingReference,
           userId: createBookingDto.userId,
           flightId: createBookingDto.flightId,
-          seatId: createBookingDto.seatId,
-          passengerName: createBookingDto.passengerName,
-          passengerEmail: createBookingDto.passengerEmail,
-          passengerPhone: createBookingDto.passengerPhone,
+          seatId: passenger.seatId,
+          passengerName: passenger.passengerName,
+          passengerEmail: passenger.passengerEmail,
+          passengerPhone: passenger.passengerPhone,
           totalAmount: fare.totalPrice,
           status: BookingStatus.CONFIRMED,
           bookingDate: new Date(),
@@ -144,10 +162,103 @@ export class BookingsService {
     } catch (error) {
       // If anything fails, unblock the seat (only if it was blocked by this user)
       if (seat.blockedByUserId === createBookingDto.userId) {
-        await this.seatBlockService.unblockSeat(createBookingDto.seatId, createBookingDto.userId);
+        await this.seatBlockService.unblockSeat(passenger.seatId, createBookingDto.userId);
       }
       throw error;
     }
+  }
+
+  private async createMultipleBookings(createBookingDto: CreateBookingDto) {
+    // First calculate the fare to validate everything
+    const fareCalculation = await this.calculateFare({
+      flightId: createBookingDto.flightId,
+      seats: createBookingDto.passengers.map(p => ({
+        seatId: p.seatId,
+        passengerName: p.passengerName
+      }))
+    });
+
+    // Validate user exists
+    const user = await this.usersRepository.findOne({
+      where: { id: createBookingDto.userId }
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Check that all seats are blocked by this user
+    const seatIds = createBookingDto.passengers.map(p => p.seatId);
+    const seats = await this.seatsRepository.find({
+      where: { id: In(seatIds) }
+    });
+
+    const notBlockedByUser = seats.filter(seat => 
+      seat.status !== SeatStatus.BLOCKED || seat.blockedByUserId !== createBookingDto.userId
+    );
+
+    if (notBlockedByUser.length > 0) {
+      throw new BadRequestException(
+        `Seats ${notBlockedByUser.map(s => s.seatNumber).join(', ')} must be blocked by you before booking`
+      );
+    }
+
+    // Create bookings in transaction
+    return await this.dataSource.transaction(async (manager) => {
+      const bookings = [];
+      const bookingReference = `IM${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+      for (let i = 0; i < createBookingDto.passengers.length; i++) {
+        const passenger = createBookingDto.passengers[i];
+        const seatDetail = fareCalculation.seatDetails[i];
+
+        // Create individual booking for each passenger
+        const booking = manager.create(Booking, {
+          bookingReference: `${bookingReference}-${i + 1}`, // Add suffix for multiple bookings
+          userId: createBookingDto.userId,
+          flightId: createBookingDto.flightId,
+          seatId: passenger.seatId,
+          passengerName: passenger.passengerName,
+          passengerEmail: passenger.passengerEmail,
+          passengerPhone: passenger.passengerPhone,
+          totalAmount: seatDetail.fare.totalPrice,
+          status: BookingStatus.CONFIRMED,
+          bookingDate: new Date(),
+          paymentDate: new Date(),
+        });
+
+        const savedBooking = await manager.save(Booking, booking);
+        bookings.push(savedBooking);
+
+        // Update seat status
+        await manager.update(Seat, passenger.seatId, { 
+          status: SeatStatus.BOOKED,
+          blockExpiresAt: null,
+          blockedByUserId: null
+        });
+      }
+
+      // Update flight available seats
+      await manager.decrement(Flight, { id: createBookingDto.flightId }, 'availableSeats', bookings.length);
+
+      // Return bookings with relations
+      const bookingsWithRelations = await Promise.all(
+        bookings.map(booking => 
+          manager.findOne(Booking, {
+            where: { id: booking.id },
+            relations: ['user', 'flight', 'seat', 'seat.seatClass'],
+          })
+        )
+      );
+
+      return {
+        bookingReference: bookingReference,
+        bookings: bookingsWithRelations,
+        totalAmount: fareCalculation.summary.totalAmount,
+        totalSeats: bookings.length,
+        summary: fareCalculation.summary
+      };
+    });
   }
 
   async findAll(): Promise<Booking[]> {
@@ -264,19 +375,98 @@ export class BookingsService {
     return `IMD-${timestamp}${randomString}`;
   }
 
-  async getBookingStats(): Promise<any> {
-    const [confirmed, cancelled, pending, total] = await Promise.all([
-      this.bookingsRepository.count({ where: { status: BookingStatus.CONFIRMED } }),
-      this.bookingsRepository.count({ where: { status: BookingStatus.CANCELLED } }),
-      this.bookingsRepository.count({ where: { status: BookingStatus.PENDING } }),
-      this.bookingsRepository.count(),
-    ]);
+  async calculateFare(calculateFareDto: CalculateFareDto) {
+    // Validate flight exists
+    const flight = await this.flightsRepository.findOne({
+      where: { id: calculateFareDto.flightId },
+      relations: ['fares', 'fares.seatClass']
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+
+    const seatDetails = [];
+    let totalAmount = 0;
+    const seatIds = calculateFareDto.seats.map(s => s.seatId);
+
+    // Get all seats with their classes and fares
+    const seats = await this.seatsRepository.find({
+      where: { id: In(seatIds) },
+      relations: ['seatClass']
+    });
+
+    if (seats.length !== calculateFareDto.seats.length) {
+      throw new NotFoundException('One or more seats not found');
+    }
+
+    // Validate all seats belong to the same flight
+    const invalidSeats = seats.filter(seat => seat.flightId !== calculateFareDto.flightId);
+    if (invalidSeats.length > 0) {
+      throw new BadRequestException('All seats must belong to the specified flight');
+    }
+
+    // Check seat availability (allow both AVAILABLE and BLOCKED seats for fare calculation)
+    const unavailableSeats = seats.filter(seat => 
+      seat.status !== SeatStatus.AVAILABLE && seat.status !== SeatStatus.BLOCKED
+    );
+    if (unavailableSeats.length > 0) {
+      throw new ConflictException(`Seats ${unavailableSeats.map(s => s.seatNumber).join(', ')} are not available`);
+    }
+
+    // Calculate fare for each seat
+    for (const seatSelection of calculateFareDto.seats) {
+      const seat = seats.find(s => s.id === seatSelection.seatId);
+      const fare = flight.fares.find(f => f.seatClassId === seat.seatClassId && f.isActive);
+
+      if (!fare) {
+        throw new NotFoundException(`No active fare found for seat ${seat.seatNumber} (${seat.seatClass.name} class)`);
+      }
+
+      const seatDetail = {
+        seatId: seat.id,
+        seatNumber: seat.seatNumber,
+        seatClass: {
+          id: seat.seatClass.id,
+          name: seat.seatClass.name,
+          description: seat.seatClass.description
+        },
+        passengerName: seatSelection.passengerName,
+        fare: {
+          basePrice: parseFloat(fare.basePrice.toString()),
+          tax: parseFloat(fare.tax.toString()),
+          serviceFee: parseFloat(fare.serviceFee.toString()),
+          totalPrice: parseFloat(fare.totalPrice.toString()),
+          currency: fare.currency
+        }
+      };
+
+      seatDetails.push(seatDetail);
+      totalAmount += parseFloat(fare.totalPrice.toString());
+    }
 
     return {
-      confirmed,
-      cancelled,
-      pending,
-      total,
+      flight: {
+        id: flight.id,
+        flightNumber: flight.flightNumber,
+        origin: flight.origin,
+        destination: flight.destination,
+        departureTime: flight.departureTime,
+        arrivalTime: flight.arrivalTime
+      },
+      seatDetails,
+      summary: {
+        totalSeats: seatDetails.length,
+        totalAmount: Math.round(totalAmount * 100) / 100, // Round to 2 decimal places
+        currency: seatDetails[0]?.fare.currency || 'USD',
+        breakdown: {
+          totalBasePrice: Math.round(seatDetails.reduce((sum, seat) => sum + seat.fare.basePrice, 0) * 100) / 100,
+          totalTax: Math.round(seatDetails.reduce((sum, seat) => sum + seat.fare.tax, 0) * 100) / 100,
+          totalServiceFee: Math.round(seatDetails.reduce((sum, seat) => sum + seat.fare.serviceFee, 0) * 100) / 100
+        }
+      }
     };
   }
+
+
 } 

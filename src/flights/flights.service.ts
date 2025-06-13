@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, MoreThanOrEqual, LessThanOrEqual } from 'typeorm';
-import { Flight, Seat, SeatClass, SeatStatus, FlightStatus, SeatClassName } from '../entities';
+import { Flight, Seat, SeatClass, SeatStatus, FlightStatus, SeatClassName, Fare } from '../entities';
 import { CreateFlightDto } from './dto/create-flight.dto';
+import { UpdateFlightDto } from './dto/update-flight.dto';
 import { SearchFlightsDto } from './dto/search-flights.dto';
 import { UpdateFlightStatusDto } from './dto/update-flight-status.dto';
 import { FlightDetailsDto } from './dto/flight-details.dto';
@@ -16,6 +17,8 @@ export class FlightsService {
     private seatsRepository: Repository<Seat>,
     @InjectRepository(SeatClass)
     private seatClassesRepository: Repository<SeatClass>,
+    @InjectRepository(Fare)
+    private faresRepository: Repository<Fare>,
   ) {}
 
   async create(createFlightDto: CreateFlightDto): Promise<Flight> {
@@ -37,115 +40,259 @@ export class FlightsService {
         throw new ConflictException('Flight number already exists');
       }
 
-      // Create flight
+      // Create flight only (no seats, no fares)
       const flight = this.flightsRepository.create({
-        ...createFlightDto,
+        flightNumber: createFlightDto.flightNumber,
+        origin: createFlightDto.origin,
+        destination: createFlightDto.destination,
+        originCode: createFlightDto.originCode,
+        destinationCode: createFlightDto.destinationCode,
+        departureTime: createFlightDto.departureTime,
+        arrivalTime: createFlightDto.arrivalTime,
+        aircraft: createFlightDto.aircraft,
         status: FlightStatus.ON_TIME,
-        totalSeats: createFlightDto.totalSeats || 0,
-        availableSeats: createFlightDto.totalSeats || 0,
+        totalSeats: 0, // Will be updated when seats are added
+        availableSeats: 0, // Will be updated when seats are added
       });
 
       const savedFlight = await this.flightsRepository.save(flight);
-
-      // Get seat classes
-      const seatClasses = await this.seatClassesRepository.find({
-        order: { priority: 'DESC' } // First class (highest priority) first
-      });
-
-      // Create seats for each class
-      const seatsToCreate = this.generateSeats(savedFlight, seatClasses);
-      
-      // Log the number of seats created
-      const seatsByClass = seatsToCreate.reduce((acc, seat) => {
-        const className = seat.seatClass.name;
-        acc[className] = (acc[className] || 0) + 1;
-        return acc;
-      }, {});
-      
-      console.log('Seats generated:', {
-        byClass: seatsByClass,
-        total: seatsToCreate.length
-      });
-
-      await this.seatsRepository.save(seatsToCreate);
+      console.log(`Flight ${savedFlight.flightNumber} created successfully`);
 
       return savedFlight;
     } catch (error) {
-      if (error instanceof ConflictException) {
+      if (error instanceof ConflictException || error instanceof BadRequestException) {
         throw error;
       }
       throw new Error('Failed to create flight: ' + error.message);
     }
   }
 
-  private generateSeats(flight: Flight, seatClasses: SeatClass[]): Partial<Seat>[] {
-    const seats: Partial<Seat>[] = [];
-    const totalSeats = flight.totalSeats || 300; // Default to 300 if not specified
+  async addSeatsForClass(flightId: string, seatClassName: SeatClassName, seatCount: number): Promise<{ message: string; seatsCreated: number }> {
+    // Validate flight exists
+    const flight = await this.flightsRepository.findOne({
+      where: { id: flightId },
+      relations: ['seats']
+    });
 
-    // Distribution of seats by class
-    const distribution = {
-      first: 0.1,    // 10% First Class
-      business: 0.2, // 20% Business Class
-      economy: 0.7,  // 70% Economy Class
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+
+    // Validate seat class exists
+    const seatClass = await this.seatClassesRepository.findOne({
+      where: { name: seatClassName }
+    });
+
+    if (!seatClass) {
+      throw new NotFoundException(`Seat class ${seatClassName} not found`);
+    }
+
+    // Check if seats already exist for this class
+    const existingSeats = flight.seats.filter(seat => seat.seatClassId === seatClass.id);
+    if (existingSeats.length > 0) {
+      throw new ConflictException(`Seats for ${seatClassName} class already exist on this flight`);
+    }
+
+         // Generate seats for the specified class
+     const seatsToCreate = await this.generateSeatsForClass(flight, seatClass, seatCount);
+    
+    // Save seats
+    await this.seatsRepository.save(seatsToCreate);
+
+    // Update flight's total and available seats
+    await this.updateFlightSeatCounts(flightId);
+
+    console.log(`Created ${seatsToCreate.length} ${seatClassName} seats for flight ${flight.flightNumber}`);
+
+    return {
+      message: `Successfully added ${seatsToCreate.length} ${seatClassName} seats to flight ${flight.flightNumber}`,
+      seatsCreated: seatsToCreate.length
     };
+  }
 
-    let currentRow = 1; // Start from row 1
-    let remainingSeats = totalSeats;
+     private async generateSeatsForClass(flight: Flight, seatClass: SeatClass, targetSeatCount: number): Promise<Partial<Seat>[]> {
+    const seats: Partial<Seat>[] = [];
 
-    // Generate seats for each class
-    seatClasses.forEach((seatClass, index) => {
-      const seatsPerRow = seatClass.name === 'first' ? 4 : // 2-2 configuration for first class
-                         seatClass.name === 'business' ? 6 : // 3-3 configuration for business class
-                         8; // 4-4 configuration for economy class
+    // Configuration based on seat class
+    const config = this.getSeatClassConfiguration(seatClass.name);
+    
+    // Calculate rows needed
+    const rows = Math.ceil(targetSeatCount / config.columns.length);
+    
+         // Get the starting row (after existing seats)
+     const startingRow = await this.getNextAvailableRow(flight);
 
-      const columns = seatClass.name === 'first' ? ['A', 'B', 'E', 'F'] : // Skip C, D for first class
-                     seatClass.name === 'business' ? ['A', 'B', 'C', 'D', 'E', 'F'] : // All columns for business
-                     ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']; // All columns for economy
-
-      // Calculate target seats for this class
-      let targetSeatCount;
-      if (index === seatClasses.length - 1) {
-        // For the last class (economy), use remaining seats
-        targetSeatCount = remainingSeats;
-      } else {
-        // For first and business class, calculate based on distribution
-        targetSeatCount = Math.ceil(totalSeats * distribution[seatClass.name]);
-      }
-
-      // Calculate rows needed (round up to ensure we have enough rows)
-      const rows = Math.ceil(targetSeatCount / columns.length);
-      const actualSeatsForClass = rows * columns.length;
-
-      // Generate seats for this class
-      for (let row = 0; row < rows; row++) {
-        for (const column of columns) {
-          // Only create the seat if we haven't exceeded the total seats
-          if (seats.length < totalSeats) {
-            seats.push({
-              seatNumber: `${currentRow + row}${column}`,
-              status: SeatStatus.AVAILABLE,
-              row: currentRow + row,
-              column: column,
-              flight,
-              seatClass,
-              flightId: flight.id,
-              seatClassId: seatClass.id,
-            });
-          }
+     // Generate seats
+     for (let row = 0; row < rows && seats.length < targetSeatCount; row++) {
+       for (const column of config.columns) {
+         if (seats.length < targetSeatCount) {
+           seats.push({
+             seatNumber: `${startingRow + row}${column}`,
+             status: SeatStatus.AVAILABLE,
+             row: startingRow + row,
+            column: column,
+            flight,
+            seatClass,
+            flightId: flight.id,
+            seatClassId: seatClass.id,
+          });
         }
       }
+    }
 
-      // Update remaining seats and current row
-      remainingSeats -= actualSeatsForClass;
-      currentRow += rows;
+    return seats;
+  }
 
-      // Add spacing between classes (5 rows between classes)
-      if (index < seatClasses.length - 1) {
-        currentRow += 5;
+  private getSeatClassConfiguration(seatClassName: SeatClassName) {
+    const configurations = {
+      [SeatClassName.FIRST]: {
+        columns: ['A', 'B', 'E', 'F'], // 2-2 configuration
+        seatsPerRow: 4
+      },
+      [SeatClassName.BUSINESS]: {
+        columns: ['A', 'B', 'C', 'D', 'E', 'F'], // 3-3 configuration
+        seatsPerRow: 6
+      },
+      [SeatClassName.ECONOMY]: {
+        columns: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], // 4-4 configuration
+        seatsPerRow: 8
+      }
+    };
+
+    return configurations[seatClassName];
+  }
+
+  private async getNextAvailableRow(flight: Flight): Promise<number> {
+    const existingSeats = await this.seatsRepository.find({
+      where: { flightId: flight.id },
+      order: { row: 'DESC' },
+      take: 1
+    });
+
+    if (existingSeats.length === 0) {
+      return 1; // Start from row 1
+    }
+
+    // Add 5 rows spacing between classes
+    return existingSeats[0].row + 6;
+  }
+
+  private async updateFlightSeatCounts(flightId: string): Promise<void> {
+    const seats = await this.seatsRepository.find({
+      where: { flightId }
+    });
+
+    const totalSeats = seats.length;
+    const availableSeats = seats.filter(seat => seat.status === SeatStatus.AVAILABLE).length;
+
+    await this.flightsRepository.update(flightId, {
+      totalSeats,
+      availableSeats
+    });
+  }
+
+  async removeSeatsForClass(flightId: string, seatClassName: SeatClassName): Promise<{ message: string; seatsRemoved: number }> {
+    // Validate flight exists
+    const flight = await this.flightsRepository.findOne({
+      where: { id: flightId }
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+
+    // Validate seat class exists
+    const seatClass = await this.seatClassesRepository.findOne({
+      where: { name: seatClassName }
+    });
+
+    if (!seatClass) {
+      throw new NotFoundException(`Seat class ${seatClassName} not found`);
+    }
+
+    // Find seats for this class
+    const seatsToRemove = await this.seatsRepository.find({
+      where: { 
+        flightId: flightId,
+        seatClassId: seatClass.id
       }
     });
 
-    return seats;
+    if (seatsToRemove.length === 0) {
+      throw new NotFoundException(`No ${seatClassName} seats found for this flight`);
+    }
+
+    // Check if any seats are booked
+    const bookedSeats = seatsToRemove.filter(seat => seat.status === SeatStatus.BOOKED);
+    if (bookedSeats.length > 0) {
+      throw new ConflictException(`Cannot remove ${seatClassName} seats: ${bookedSeats.length} seats are already booked`);
+    }
+
+    // Remove seats
+    await this.seatsRepository.remove(seatsToRemove);
+
+    // Update flight seat counts
+    await this.updateFlightSeatCounts(flightId);
+
+    console.log(`Removed ${seatsToRemove.length} ${seatClassName} seats from flight ${flight.flightNumber}`);
+
+    return {
+      message: `Successfully removed ${seatsToRemove.length} ${seatClassName} seats from flight ${flight.flightNumber}`,
+      seatsRemoved: seatsToRemove.length
+    };
+  }
+
+  async getFlightSeatConfiguration(flightId: string) {
+    const flight = await this.flightsRepository.findOne({
+      where: { id: flightId },
+      relations: ['seats', 'seats.seatClass']
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+
+    // Group seats by class
+    const seatsByClass = flight.seats.reduce((acc, seat) => {
+      const className = seat.seatClass.name;
+      if (!acc[className]) {
+        acc[className] = {
+          seatClass: seat.seatClass,
+          totalSeats: 0,
+          availableSeats: 0,
+          bookedSeats: 0,
+          blockedSeats: 0
+        };
+      }
+      
+      acc[className].totalSeats++;
+      
+      switch (seat.status) {
+        case SeatStatus.AVAILABLE:
+          acc[className].availableSeats++;
+          break;
+        case SeatStatus.BOOKED:
+          acc[className].bookedSeats++;
+          break;
+        case SeatStatus.BLOCKED:
+          acc[className].blockedSeats++;
+          break;
+      }
+      
+      return acc;
+    }, {});
+
+    return {
+      flight: {
+        id: flight.id,
+        flightNumber: flight.flightNumber,
+        origin: flight.origin,
+        destination: flight.destination,
+        totalSeats: flight.totalSeats,
+        availableSeats: flight.availableSeats
+      },
+      seatConfiguration: seatsByClass
+    };
   }
 
   async findAll(): Promise<Flight[]> {
@@ -210,7 +357,7 @@ export class FlightsService {
     return this.flightsRepository.save(flight);
   }
 
-  async update(id: string, updateFlightDto: Partial<CreateFlightDto>): Promise<Flight> {
+  async update(id: string, updateFlightDto: UpdateFlightDto): Promise<Flight> {
     const flight = await this.findOne(id);
 
     Object.assign(flight, {
@@ -282,9 +429,9 @@ export class FlightsService {
       return acc;
     }, {});
 
-    // Add fare information to each seat class
+    // Add fare information to each seat class (only active fares)
     Object.values(seatsByClass).forEach((classInfo: any) => {
-      const fare = flight.fares.find(f => f.seatClass.id === classInfo.seatClass.id);
+      const fare = flight.fares.find(f => f.seatClass.id === classInfo.seatClass.id && f.isActive);
       if (fare) {
         classInfo.fare = {
           basePrice: fare.basePrice,
@@ -317,23 +464,25 @@ export class FlightsService {
       throw new NotFoundException('Flight not found');
     }
 
-    // Group by seat class and include fare information
-    const seatClasses = flight.fares.map(fare => ({
-      id: fare.seatClass.id,
-      name: fare.seatClass.name,
-      description: fare.seatClass.description,
-      fare: {
-        basePrice: fare.basePrice,
-        tax: fare.tax,
-        serviceFee: fare.serviceFee,
-        totalPrice: fare.totalPrice,
-        currency: fare.currency
-      },
-      availableSeats: flight.seats.filter(
-        seat => seat.seatClass.id === fare.seatClass.id && 
-        seat.status === SeatStatus.AVAILABLE
-      ).length
-    }));
+    // Group by seat class and include fare information (only active fares)
+    const seatClasses = flight.fares
+      .filter(fare => fare.isActive)
+      .map(fare => ({
+        id: fare.seatClass.id,
+        name: fare.seatClass.name,
+        description: fare.seatClass.description,
+        fare: {
+          basePrice: fare.basePrice,
+          tax: fare.tax,
+          serviceFee: fare.serviceFee,
+          totalPrice: fare.totalPrice,
+          currency: fare.currency
+        },
+        availableSeats: flight.seats.filter(
+          seat => seat.seatClass.id === fare.seatClass.id && 
+          seat.status === SeatStatus.AVAILABLE
+        ).length
+      }));
 
     return seatClasses;
   }
@@ -353,10 +502,10 @@ export class FlightsService {
       throw new NotFoundException('Flight not found');
     }
 
-    // Get fare for the seat class
-    const fare = flight.fares.find(f => f.seatClass.name === seatClassName);
+    // Get active fare for the seat class
+    const fare = flight.fares.find(f => f.seatClass.name === seatClassName && f.isActive);
     if (!fare) {
-      throw new NotFoundException(`No fare found for seat class ${seatClassName}`);
+      throw new NotFoundException(`No active fare found for seat class ${seatClassName}`);
     }
 
     // Get available seats for the class

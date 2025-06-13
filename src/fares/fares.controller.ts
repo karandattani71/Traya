@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { FaresService } from './fares.service';
 import { CreateFareDto } from './dto/create-fare.dto';
+import { UpdateFareDto } from './dto/update-fare.dto';
 
 @ApiTags('fares')
 @Controller('fares')
@@ -28,6 +29,7 @@ export class FaresController {
   @ApiResponse({ status: HttpStatus.CREATED, description: 'Fare created successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight or seat class not found' })
   @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Fare already exists for this flight and seat class' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Fare violates pricing hierarchy' })
   async create(@Body() createFareDto: CreateFareDto) {
     return this.faresService.create(createFareDto);
   }
@@ -65,15 +67,31 @@ export class FaresController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update fare' })
+  @ApiOperation({ summary: 'Update fare by fare ID' })
   @ApiParam({ name: 'id', description: 'Fare ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Fare updated successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Fare not found' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Update violates pricing hierarchy' })
   async update(
     @Param('id', ParseUUIDPipe) id: string, 
-    @Body() updateFareDto: Partial<CreateFareDto>
+    @Body() updateFareDto: UpdateFareDto
   ) {
     return this.faresService.update(id, updateFareDto);
+  }
+
+  @Patch('flight/:flightId/seat-class/:seatClassName')
+  @ApiOperation({ summary: 'Update fare by flight ID and seat class name' })
+  @ApiParam({ name: 'flightId', description: 'Flight ID' })
+  @ApiParam({ name: 'seatClassName', description: 'Seat class name', enum: ['economy', 'business', 'first'] })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Fare updated successfully' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight, seat class, or fare not found' })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Update violates pricing hierarchy' })
+  async updateByFlightAndSeatClass(
+    @Param('flightId', ParseUUIDPipe) flightId: string,
+    @Param('seatClassName') seatClassName: 'economy' | 'business' | 'first',
+    @Body() updateFareDto: UpdateFareDto
+  ) {
+    return this.faresService.updateByFlightAndSeatClass(flightId, seatClassName, updateFareDto);
   }
 
   @Patch(':id/activate')
