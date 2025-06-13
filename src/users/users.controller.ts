@@ -35,7 +35,7 @@ export class UsersController {
   @ApiResponse({ status: HttpStatus.OK, description: 'Profile retrieved successfully' })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
   async getProfile(@Request() req) {
-    return this.usersService.findOne(req.user.id);
+    return this.usersService.findOne(req.user.sub);
   }
 
   @Get()
@@ -52,8 +52,8 @@ export class UsersController {
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'User not found' })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    // Only allow users to view their own profile unless they're an admin
-    if (id !== req.user.id && req.user.role !== 'admin') {
+    // Only allow users to view their own profile
+    if (id !== req.user.sub) {
       throw new UnauthorizedException('You can only view your own profile');
     }
     return this.usersService.findOne(id);
@@ -87,8 +87,8 @@ export class UsersController {
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'User not found' })
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
   async remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    // Only allow users to delete their own account unless they're an admin
-    if (id !== req.user.id && req.user.role !== 'admin') {
+    // Only allow users to delete their own account
+    if (id !== req.user.sub) {
       throw new UnauthorizedException('You can only delete your own account');
     }
     await this.usersService.remove(id);
