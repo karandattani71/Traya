@@ -44,8 +44,50 @@ A comprehensive flight booking management system built with NestJS, PostgreSQL, 
 - Node.js 22+
 - PostgreSQL 15+
 - pnpm (recommended) or npm
+- Docker & Docker Compose (for containerized setup)
 
-### Installation
+### Quick Start with Docker 🐳
+
+The fastest way to get started is using Docker:
+
+```bash
+# Clone and start the project
+git clone https://github.com/karandattani71/Traya.git
+cd imdiyo-airline-flight-management
+
+# Start with Docker (includes database + migrations)
+pnpm docker:up
+# or
+npm run docker:up
+```
+
+This will:
+- Start PostgreSQL on port **5435** (host) → 5432 (container)
+- Automatically run database migrations
+- Start the application on port **3000**
+- Set up all required services with proper networking
+
+**Docker Commands:**
+```bash
+# Start services
+pnpm docker:up
+
+# Stop services
+pnpm docker:down
+
+# Clean up (removes volumes)
+pnpm docker:clean
+
+# View logs
+pnpm docker:logs
+
+# Rebuild and restart
+pnpm docker:rebuild
+```
+
+### Manual Installation
+
+If you prefer to run without Docker:
 
 1. Clone the repository and install dependencies:
 ```bash
@@ -249,6 +291,12 @@ pnpm format
 5. Run migrations before starting the application
 
 ## Troubleshooting
+
+### Docker Issues
+- **Port conflicts**: If port 5435 or 3000 is in use, stop other services or modify `docker-compose.yml`
+- **Migration fails**: Check logs with `pnpm docker:logs` and ensure PostgreSQL is healthy
+- **Build issues**: Try `pnpm docker:clean` then `pnpm docker:up`
+- **Database connection**: PostgreSQL runs on port 5435 (host) for external connections
 
 ### Environment Setup
 - Copy the example file: `cp env.example .env` (Linux/Mac) or `copy env.example .env` (Windows)

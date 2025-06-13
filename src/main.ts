@@ -3,6 +3,11 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
+// Polyfill for crypto.randomUUID() for Node.js 18 compatibility with @nestjs/schedule
+if (!global.crypto) {
+  global.crypto = require('crypto');
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 

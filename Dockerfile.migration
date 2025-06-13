@@ -1,0 +1,22 @@
+# Migration Dockerfile
+FROM node:18-alpine
+
+# Install pnpm and PostgreSQL client
+RUN npm install -g pnpm
+RUN apk add --no-cache postgresql-client
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+
+# Install dependencies (only production dependencies needed for migration)
+RUN pnpm install --prod --frozen-lockfile
+
+# Copy migration files and runner
+COPY run-migration.js ./
+COPY src/database/migrations/ ./src/database/migrations/
+
+# Wait for database and run migration
+CMD ["node", "run-migration.js"] 

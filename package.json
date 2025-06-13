@@ -19,7 +19,12 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "node run-migration.js",
-    "migration:setup": "npm run migration:run"
+    "migration:setup": "npm run migration:run",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down",
+    "docker:clean": "docker-compose down -v --remove-orphans",
+    "docker:logs": "docker-compose logs -f",
+    "docker:rebuild": "docker-compose down && docker-compose up --build"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",
