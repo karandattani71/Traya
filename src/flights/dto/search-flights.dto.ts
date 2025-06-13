@@ -1,31 +1,16 @@
-import { IsString, IsDateString, IsOptional, IsEnum, IsNumber, Min, Max } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { SeatClassName } from '../../entities';
+import { IsString, IsDateString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class SearchFlightsDto {
-  @ApiProperty({ description: 'Origin airport/city' })
+  @ApiProperty({ description: 'Origin airport code (e.g., JFK, LHR)', example: 'JFK' })
   @IsString()
-  origin: string;
+  originCode: string;
 
-  @ApiProperty({ description: 'Destination airport/city' })
+  @ApiProperty({ description: 'Destination airport code (e.g., CDG, DXB)', example: 'LHR' })
   @IsString()
-  destination: string;
+  destinationCode: string;
 
-  @ApiProperty({ description: 'Departure date in YYYY-MM-DD format', format: 'date' })
+  @ApiProperty({ description: 'Departure date in YYYY-MM-DD format', format: 'date', example: '2024-12-07' })
   @IsDateString()
   departureDate: string;
-
-  @ApiPropertyOptional({ description: 'Preferred seat class', enum: SeatClassName })
-  @IsOptional()
-  @IsEnum(SeatClassName)
-  seatClass?: SeatClassName;
-
-  @ApiPropertyOptional({ description: 'Number of passengers', minimum: 1, maximum: 10, default: 1 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(1)
-  @Max(10)
-  passengers?: number = 1;
 } 

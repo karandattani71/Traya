@@ -23,6 +23,12 @@ export class Flight {
   @Column({ type: 'varchar', length: 100 })
   destination: string;
 
+  @Column({ type: 'varchar', length: 10 })
+  originCode: string;
+
+  @Column({ type: 'varchar', length: 10 })
+  destinationCode: string;
+
   @Column({ type: 'timestamp' })
   departureTime: Date;
 

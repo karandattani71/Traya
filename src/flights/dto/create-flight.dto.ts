@@ -17,6 +17,16 @@ export class CreateFlightDto {
   @Length(1, 100)
   destination: string;
 
+  @ApiProperty({ description: 'Origin airport code (e.g., JFK, LHR)', maxLength: 10 })
+  @IsString()
+  @Length(3, 10)
+  originCode: string;
+
+  @ApiProperty({ description: 'Destination airport code (e.g., CDG, DXB)', maxLength: 10 })
+  @IsString()
+  @Length(3, 10)
+  destinationCode: string;
+
   @ApiProperty({ description: 'Departure time in ISO format', format: 'date-time' })
   @IsDateString()
   departureTime: string;

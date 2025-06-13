@@ -5,6 +5,7 @@ import { Flight, Seat, SeatClass, SeatStatus, FlightStatus, SeatClassName } from
 import { CreateFlightDto } from './dto/create-flight.dto';
 import { SearchFlightsDto } from './dto/search-flights.dto';
 import { UpdateFlightStatusDto } from './dto/update-flight-status.dto';
+import { FlightDetailsDto } from './dto/flight-details.dto';
 
 @Injectable()
 export class FlightsService {
@@ -18,21 +19,31 @@ export class FlightsService {
   ) {}
 
   async create(createFlightDto: CreateFlightDto): Promise<Flight> {
+    // Validate arrival time is after departure time
+    const departureTime = new Date(createFlightDto.departureTime);
+    const arrivalTime = new Date(createFlightDto.arrivalTime);
+
+    if (arrivalTime <= departureTime) {
+      throw new BadRequestException('Arrival time must be after departure time');
+    }
+
     try {
+      // Create flight
       const flight = this.flightsRepository.create({
         ...createFlightDto,
-        departureTime: new Date(createFlightDto.departureTime),
-        arrivalTime: new Date(createFlightDto.arrivalTime),
+        status: FlightStatus.ON_TIME,
         totalSeats: createFlightDto.totalSeats || 0,
         availableSeats: createFlightDto.totalSeats || 0,
       });
 
       const savedFlight = await this.flightsRepository.save(flight);
 
-      // Create seats for the flight if totalSeats is provided
-      if (createFlightDto.totalSeats) {
-        await this.createSeatsForFlight(savedFlight, createFlightDto.totalSeats);
-      }
+      // Get seat classes
+      const seatClasses = await this.seatClassesRepository.find();
+
+      // Create seats for each class
+      const seatsToCreate = this.generateSeats(savedFlight, seatClasses);
+      await this.seatsRepository.save(seatsToCreate);
 
       return savedFlight;
     } catch (error) {
@@ -41,6 +52,43 @@ export class FlightsService {
       }
       throw error;
     }
+  }
+
+  private generateSeats(flight: Flight, seatClasses: SeatClass[]): Partial<Seat>[] {
+    const seats: Partial<Seat>[] = [];
+    const totalSeats = flight.totalSeats || 300; // Default to 300 if not specified
+
+    // Distribution of seats by class (example)
+    const distribution = {
+      economy: 0.7, // 70%
+      business: 0.2, // 20%
+      first: 0.1, // 10%
+    };
+
+    seatClasses.forEach(seatClass => {
+      const seatCount = Math.floor(totalSeats * distribution[seatClass.name]);
+      const seatsPerRow = 6; // Example: 3-3 configuration
+      const rows = Math.ceil(seatCount / seatsPerRow);
+
+      for (let row = 1; row <= rows; row++) {
+        for (let col = 0; col < seatsPerRow; col++) {
+          if ((row - 1) * seatsPerRow + col < seatCount) {
+            seats.push({
+              seatNumber: `${row}${String.fromCharCode(65 + col)}`, // 1A, 1B, etc.
+              status: SeatStatus.AVAILABLE,
+              row,
+              column: String.fromCharCode(65 + col),
+              flight,
+              seatClass,
+              flightId: flight.id,
+              seatClassId: seatClass.id,
+            });
+          }
+        }
+      }
+    });
+
+    return seats;
   }
 
   async findAll(): Promise<Flight[]> {
@@ -64,36 +112,44 @@ export class FlightsService {
   }
 
   async search(searchDto: SearchFlightsDto): Promise<Flight[]> {
-    const { origin, destination, departureDate, seatClass, passengers = 1 } = searchDto;
+    const { originCode, destinationCode, departureDate } = searchDto;
 
+    // Create date range for the departure date
     const startDate = new Date(departureDate);
     startDate.setHours(0, 0, 0, 0);
+
     const endDate = new Date(departureDate);
     endDate.setHours(23, 59, 59, 999);
 
     const queryBuilder = this.flightsRepository.createQueryBuilder('flight')
       .leftJoinAndSelect('flight.seats', 'seat')
-      .leftJoinAndSelect('seat.seatClass', 'seatClass')
       .leftJoinAndSelect('flight.fares', 'fare')
-      .leftJoinAndSelect('fare.seatClass', 'fareSeatClass')
-      .where('LOWER(flight.origin) = LOWER(:origin)', { origin })
-      .andWhere('LOWER(flight.destination) = LOWER(:destination)', { destination })
-      .andWhere('flight.departureTime BETWEEN :startDate AND :endDate', { startDate, endDate })
-      .andWhere('flight.status != :cancelledStatus', { cancelledStatus: FlightStatus.CANCELLED })
-      .andWhere('flight.availableSeats >= :passengers', { passengers });
+      .where('flight.originCode = :originCode', { originCode })
+      .andWhere('flight.destinationCode = :destinationCode', { destinationCode })
+      .andWhere('flight.departureTime BETWEEN :startDate AND :endDate', {
+        startDate,
+        endDate,
+      })
+      .andWhere('flight.status != :cancelledStatus', {
+        cancelledStatus: FlightStatus.CANCELLED,
+      })
+      .orderBy('flight.departureTime', 'ASC');
 
-    if (seatClass) {
-      queryBuilder.andWhere('seatClass.name = :seatClass', { seatClass });
-    }
-
-    return queryBuilder
-      .orderBy('flight.departureTime', 'ASC')
-      .getMany();
+    return queryBuilder.getMany();
   }
 
   async updateStatus(id: string, updateStatusDto: UpdateFlightStatusDto): Promise<Flight> {
-    const flight = await this.findOne(id);
+    const flight = await this.flightsRepository.findOne({
+      where: { id },
+      relations: ['seats', 'fares'], // Only load essential relations
+    });
+    
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+    
     flight.status = updateStatusDto.status;
+    
     return this.flightsRepository.save(flight);
   }
 
@@ -137,56 +193,152 @@ export class FlightsService {
       .getMany();
   }
 
-  private async createSeatsForFlight(flight: Flight, totalSeats: number): Promise<void> {
-    const seatClasses = await this.seatClassesRepository.find();
-    
-    if (seatClasses.length === 0) {
-      throw new BadRequestException('No seat classes found. Please create seat classes first.');
+  async getFlightDetails(id: string): Promise<FlightDetailsDto> {
+    const flight = await this.flightsRepository.findOne({
+      where: { id },
+      relations: [
+        'seats',
+        'seats.seatClass',
+        'fares',
+        'fares.seatClass'
+      ],
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
     }
 
-    // Distribute seats across classes (example distribution)
-    const economySeats = Math.floor(totalSeats * 0.7); // 70% economy
-    const businessSeats = Math.floor(totalSeats * 0.2); // 20% business
-    const firstSeats = totalSeats - economySeats - businessSeats; // remaining first class
-
-    const seatsToCreate = [];
-    let seatNumber = 1;
-
-    // Create seats for each class
-    for (const seatClass of seatClasses) {
-      let seatsForClass = 0;
-      
-      switch (seatClass.name) {
-        case SeatClassName.ECONOMY:
-          seatsForClass = economySeats;
-          break;
-        case SeatClassName.BUSINESS:
-          seatsForClass = businessSeats;
-          break;
-        case SeatClassName.FIRST:
-          seatsForClass = firstSeats;
-          break;
+    // Group seats by class and count available seats
+    const seatsByClass = flight.seats.reduce((acc, seat) => {
+      const className = seat.seatClass.name;
+      if (!acc[className]) {
+        acc[className] = {
+          total: 0,
+          available: 0,
+          seatClass: seat.seatClass
+        };
       }
-
-      for (let i = 0; i < seatsForClass; i++) {
-        const row = Math.ceil(seatNumber / 6);
-        const column = String.fromCharCode(65 + ((seatNumber - 1) % 6)); // A, B, C, D, E, F
-
-        seatsToCreate.push({
-          seatNumber: `${row}${column}`,
-          row,
-          column,
-          flight,
-          flightId: flight.id,
-          seatClass,
-          seatClassId: seatClass.id,
-          status: SeatStatus.AVAILABLE,
-        });
-
-        seatNumber++;
+      acc[className].total++;
+      if (seat.status === SeatStatus.AVAILABLE) {
+        acc[className].available++;
       }
+      return acc;
+    }, {});
+
+    // Add fare information to each seat class
+    Object.values(seatsByClass).forEach((classInfo: any) => {
+      const fare = flight.fares.find(f => f.seatClass.id === classInfo.seatClass.id);
+      if (fare) {
+        classInfo.fare = {
+          basePrice: fare.basePrice,
+          tax: fare.tax,
+          serviceFee: fare.serviceFee,
+          totalPrice: fare.totalPrice,
+          currency: fare.currency
+        };
+      }
+    });
+
+    return {
+      ...flight,
+      seatAvailability: seatsByClass
+    } as FlightDetailsDto;
+  }
+
+  async getSeatClassesWithFares(id: string) {
+    const flight = await this.flightsRepository.findOne({
+      where: { id },
+      relations: [
+        'seats',
+        'seats.seatClass',
+        'fares',
+        'fares.seatClass'
+      ],
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
     }
 
-    await this.seatsRepository.save(seatsToCreate);
+    // Group by seat class and include fare information
+    const seatClasses = flight.fares.map(fare => ({
+      id: fare.seatClass.id,
+      name: fare.seatClass.name,
+      description: fare.seatClass.description,
+      fare: {
+        basePrice: fare.basePrice,
+        tax: fare.tax,
+        serviceFee: fare.serviceFee,
+        totalPrice: fare.totalPrice,
+        currency: fare.currency
+      },
+      availableSeats: flight.seats.filter(
+        seat => seat.seatClass.id === fare.seatClass.id && 
+        seat.status === SeatStatus.AVAILABLE
+      ).length
+    }));
+
+    return seatClasses;
+  }
+
+  async getAvailableSeatsWithFares(id: string, seatClassName: SeatClassName) {
+    const flight = await this.flightsRepository.findOne({
+      where: { id },
+      relations: [
+        'seats',
+        'seats.seatClass',
+        'fares',
+        'fares.seatClass'
+      ],
+    });
+
+    if (!flight) {
+      throw new NotFoundException('Flight not found');
+    }
+
+    // Get fare for the seat class
+    const fare = flight.fares.find(f => f.seatClass.name === seatClassName);
+    if (!fare) {
+      throw new NotFoundException(`No fare found for seat class ${seatClassName}`);
+    }
+
+    // Get available seats for the class
+    const seats = flight.seats
+      .filter(seat => 
+        seat.seatClass.name === seatClassName && 
+        seat.status === SeatStatus.AVAILABLE
+      )
+      .map(seat => ({
+        id: seat.id,
+        seatNumber: seat.seatNumber,
+        row: seat.row,
+        column: seat.column,
+        seatClass: {
+          name: seat.seatClass.name,
+          description: seat.seatClass.description
+        },
+        fare: {
+          basePrice: fare.basePrice,
+          tax: fare.tax,
+          serviceFee: fare.serviceFee,
+          totalPrice: fare.totalPrice,
+          currency: fare.currency
+        }
+      }));
+
+    return {
+      seatClass: {
+        name: seatClassName,
+        description: fare.seatClass.description,
+        fare: {
+          basePrice: fare.basePrice,
+          tax: fare.tax,
+          serviceFee: fare.serviceFee,
+          totalPrice: fare.totalPrice,
+          currency: fare.currency
+        }
+      },
+      availableSeats: seats
+    };
   }
 } 

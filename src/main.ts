@@ -21,6 +21,18 @@ async function bootstrap() {
     .setTitle('Imdiyo Airline Flight Management System')
     .setDescription('Comprehensive flight booking and management API')
     .setVersion('1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Enter JWT token',
+        in: 'header',
+      },
+      'JWT-auth', // This name here is important for references
+    )
+    .addTag('auth', 'Authentication endpoints')
     .addTag('flights', 'Flight management operations')
     .addTag('bookings', 'Booking management operations')
     .addTag('users', 'User management operations')

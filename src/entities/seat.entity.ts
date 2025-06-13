@@ -25,6 +25,12 @@ export class Seat {
   })
   status: SeatStatus;
 
+  @Column({ type: 'timestamp', nullable: true })
+  blockExpiresAt: Date;
+
+  @Column({ type: 'uuid', nullable: true })
+  blockedByUserId: string;
+
   @Column({ type: 'int' })
   row: number;
 

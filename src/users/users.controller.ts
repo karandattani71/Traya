@@ -7,28 +7,35 @@ import {
   Param, 
   Delete, 
   ParseUUIDPipe, 
-  HttpStatus 
+  HttpStatus, 
+  UnauthorizedException, 
+  Request 
 } from '@nestjs/common';
 import { 
   ApiTags, 
   ApiOperation, 
   ApiResponse, 
-  ApiParam 
+  ApiParam, 
+  ApiBearerAuth 
 } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UseGuards } from '@nestjs/common';
 
 @ApiTags('users')
+@ApiBearerAuth('JWT-auth')
+@UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Post()
-  @ApiOperation({ summary: 'Create a new user' })
-  @ApiResponse({ status: HttpStatus.CREATED, description: 'User created successfully' })
-  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Email already exists' })
-  async create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  @Get('profile')
+  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Profile retrieved successfully' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+  async getProfile(@Request() req) {
+    return this.usersService.findOne(req.user.id);
   }
 
   @Get()
@@ -43,7 +50,12 @@ export class UsersController {
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'User found' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'User not found' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+  async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    // Only allow users to view their own profile unless they're an admin
+    if (id !== req.user.id && req.user.role !== 'admin') {
+      throw new UnauthorizedException('You can only view your own profile');
+    }
     return this.usersService.findOne(id);
   }
 
@@ -59,12 +71,26 @@ export class UsersController {
     return this.usersService.update(id, updateUserDto);
   }
 
+  @Post()
+  @ApiOperation({ summary: 'Create a new user' })
+  @ApiResponse({ status: HttpStatus.CREATED, description: 'User created successfully' })
+  @ApiResponse({ status: HttpStatus.CONFLICT, description: 'Email already exists' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+  async create(@Body() createUserDto: CreateUserDto) {
+    return this.usersService.create(createUserDto);
+  }
+
   @Delete(':id')
   @ApiOperation({ summary: 'Delete user' })
   @ApiParam({ name: 'id', description: 'User ID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'User deleted successfully' })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'User not found' })
-  async remove(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+  async remove(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    // Only allow users to delete their own account unless they're an admin
+    if (id !== req.user.id && req.user.role !== 'admin') {
+      throw new UnauthorizedException('You can only delete your own account');
+    }
     await this.usersService.remove(id);
     return { message: 'User deleted successfully' };
   }

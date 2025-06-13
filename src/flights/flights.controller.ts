@@ -8,20 +8,24 @@ import {
   Delete, 
   Query,
   ParseUUIDPipe, 
-  HttpStatus 
+  HttpStatus,
+  UseGuards 
 } from '@nestjs/common';
 import { 
   ApiTags, 
   ApiOperation, 
   ApiResponse, 
   ApiParam,
-  ApiQuery 
+  ApiQuery,
+  ApiBearerAuth
 } from '@nestjs/swagger';
 import { FlightsService } from './flights.service';
 import { CreateFlightDto } from './dto/create-flight.dto';
 import { SearchFlightsDto } from './dto/search-flights.dto';
 import { UpdateFlightStatusDto } from './dto/update-flight-status.dto';
 import { SeatClassName } from '../entities';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { FlightDetailsDto } from './dto/flight-details.dto';
 
 @ApiTags('flights')
 @Controller('flights')
@@ -37,7 +41,7 @@ export class FlightsController {
   }
 
   @Get('search')
-  @ApiOperation({ summary: 'Search flights between locations' })
+  @ApiOperation({ summary: 'Search available flights' })
   @ApiResponse({ status: HttpStatus.OK, description: 'List of matching flights' })
   async search(@Query() searchDto: SearchFlightsDto) {
     return this.flightsService.search(searchDto);
@@ -51,25 +55,38 @@ export class FlightsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get flight by ID' })
+  @ApiOperation({ summary: 'Get detailed flight information including seat classes and fares' })
   @ApiParam({ name: 'id', description: 'Flight ID' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Flight found' })
+  @ApiResponse({ 
+    status: HttpStatus.OK, 
+    description: 'Flight details with seat availability and fares',
+    type: FlightDetailsDto 
+  })
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
-  async findOne(@Param('id', ParseUUIDPipe) id: string) {
-    return this.flightsService.findOne(id);
+  async getFlightDetails(@Param('id', ParseUUIDPipe) id: string): Promise<FlightDetailsDto> {
+    return this.flightsService.getFlightDetails(id);
   }
 
-  @Get(':id/seats')
-  @ApiOperation({ summary: 'Get available seats for a flight' })
+  @Get(':id/seat-classes/:seatClassName/seats')
+  @ApiOperation({ summary: 'Get available seats for a specific seat class in a flight' })
   @ApiParam({ name: 'id', description: 'Flight ID' })
-  @ApiQuery({ name: 'seatClass', required: false, enum: SeatClassName })
-  @ApiResponse({ status: HttpStatus.OK, description: 'List of available seats' })
-  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
-  async getAvailableSeats(
+  @ApiParam({ name: 'seatClassName', description: 'Seat class name (economy, business, first)' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'List of available seats with their fares' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight or seat class not found' })
+  async getAvailableSeatsWithFares(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('seatClass') seatClass?: SeatClassName
+    @Param('seatClassName') seatClassName: SeatClassName
   ) {
-    return this.flightsService.getAvailableSeats(id, seatClass);
+    return this.flightsService.getAvailableSeatsWithFares(id, seatClassName);
+  }
+
+  @Get(':id/seat-classes')
+  @ApiOperation({ summary: 'Get all seat classes with fares for a flight' })
+  @ApiParam({ name: 'id', description: 'Flight ID' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'List of seat classes with their fares' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Flight not found' })
+  async getSeatClassesWithFares(@Param('id', ParseUUIDPipe) id: string) {
+    return this.flightsService.getSeatClassesWithFares(id);
   }
 
   @Patch(':id')

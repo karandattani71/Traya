@@ -1,31 +1,28 @@
-import { IsString, IsEmail, IsOptional, IsUUID, Length } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsUUID, IsEmail, IsPhoneNumber, Length } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class CreateBookingDto {
-  @ApiProperty({ description: 'ID of the user making the booking' })
-  @IsUUID()
-  userId: string;
-
-  @ApiProperty({ description: 'ID of the flight to book' })
+  @ApiProperty({ description: 'Flight ID' })
   @IsUUID()
   flightId: string;
 
-  @ApiProperty({ description: 'ID of the seat to book' })
+  @ApiProperty({ description: 'Seat ID' })
   @IsUUID()
   seatId: string;
 
-  @ApiProperty({ description: 'Passenger full name', maxLength: 100 })
+  @ApiProperty({ description: 'Passenger full name' })
   @IsString()
-  @Length(1, 100)
+  @Length(2, 100)
   passengerName: string;
 
-  @ApiProperty({ description: 'Passenger email address', format: 'email' })
+  @ApiProperty({ description: 'Passenger email' })
   @IsEmail()
   passengerEmail: string;
 
-  @ApiPropertyOptional({ description: 'Passenger phone number', maxLength: 15 })
-  @IsOptional()
-  @IsString()
-  @Length(1, 15)
-  passengerPhone?: string;
+  @ApiProperty({ description: 'Passenger phone number' })
+  @IsPhoneNumber()
+  passengerPhone: string;
+
+  // Internal property set by the controller
+  userId?: string;
 } 
