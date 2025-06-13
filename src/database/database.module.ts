@@ -15,8 +15,9 @@ import { User, Flight, SeatClass, Seat, Booking, Fare } from '../entities';
         password: configService.get('DB_PASSWORD', 'password'),
         database: configService.get('DB_NAME', 'imdiyo_airline'),
         entities: [User, Flight, SeatClass, Seat, Booking, Fare],
-        synchronize: true, // Set to false in production
-        logging: true,
+        // Set to false in production - use migrations instead
+        synchronize: configService.get('NODE_ENV') === 'development' ? true : false,
+        logging: configService.get('NODE_ENV') === 'development',
         ssl: configService.get('DB_SSL') === 'true' ? { rejectUnauthorized: false } : false,
       }),
       inject: [ConfigService],
